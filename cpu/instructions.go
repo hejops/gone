@@ -1,5 +1,7 @@
 package cpu
 
+import "gone/mask"
+
 // all function signatures were automatically generated from
 // https://www.nesdev.org/obelisk-6502-guide/reference.html
 
@@ -31,8 +33,27 @@ package cpu
 // Set Negative if M7 = 1
 func (c *Cpu) setNegativeM7() { c.Flags.Negative = c.M&0x80 > 0 }
 
+// Set Negative if A7 = 1
+func (c *Cpu) setNegativeA7() { c.Flags.Negative = c.Accumulator&0x80 > 0 }
+
 // Set Zero if Accumulator = 0
 func (c *Cpu) setZero() { c.Flags.Zero = c.Accumulator == 0 }
+
+func (c *Cpu) branch(cond bool) {
+	// all Branch instructions add 1 cycle if the condition evaluates to
+	// true, and an extra cycle if PageCrossed. if the condition evaluates
+	// to false, no action is taken, and no cycles are added
+
+	if cond {
+		c.Cycles++
+		// c.ProgramCounter += uint16(c.RelAddress)
+		c.ProgramCounter = c.AbsAddress
+		if c.PageCrossed {
+			c.Cycles++
+			c.PageCrossed = false
+		}
+	}
+}
 
 // TODO: all instructions should PC++?
 
@@ -40,29 +61,54 @@ func (c *Cpu) setZero() { c.Flags.Zero = c.Accumulator == 0 }
 func (c *Cpu) ADC() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#ADC
 
-	// c.Accumulator += c.M
+	// this, along with SBC, are the most complicated instructions
+	// 1. additions that lead to valid overflow (>255) must be recorded in Carry bit
+	// 2. additions that lead to invalid overflow must be recorded in Overflow bit
+
+	// int8(0x80)
+	// signed and unsigned int8s share the same binary representation (a
+	// negative int has leftmost bit of 1), but have different decimal
+	// values:
+	//
+	// 0x80 0b1000_0000 OVR 128
+	// 0x7f 0b0111_1111 127 127
+	// 0x01 0b0000_0001   1   1
+	// 0x00 0b0000_0000   0   0
+	// 0xff 0b1111_1111  -1 255
+	// 0xfe 0b1111_1110  -2 254
+	//
+	// 0xfe + 1 = 254 + 1 = 255 = 0xff
+	// 0xfe + 1 =  -2 + 1 =  -1 = 0xff
+	//
+	// we need to find out if the byte we have is signed or unsigned. this
+	// is done by the Negative flag
+	//
+	// https://www.simonv.fr/TypesConvert/?integers
 
 	// in Go, overflow is possible at runtime, and results in wrapping
-	// (e.g. 250+6=0), i.e. the sum will be less
+	// (e.g. 250+6=0), i.e. the sum will be less. OLC casts the 3 operands
+	// into words and checks overflow (sum>255) explicitly. this behaviour
+	// seems 'inaccurate', as the 6502 would not have had this luxury
+
 	sum := c.Accumulator + c.M
 	if sum < c.Accumulator {
 		// C 	Carry Flag 	Set if overflow in bit 7
-		// "Set if overflow in bit 7" -- bit 7 of what: A, M, or A+M? i
-		// assume A+M for now
+		// "bit 7" refers to the result (A+M)
 		c.Flags.Carry = true
 	}
 
 	c.Accumulator = sum
 	if c.Flags.Carry {
-		c.Accumulator += 1
+		c.Accumulator += 1 // just 1?
 	}
 
-	// Z 	Zero Flag 	Set if A = 0
 	c.setZero()
-	// V 	Overflow Flag 	Set if sign bit is incorrect
-	// c.Flags.Overflow = ???
-	// N 	Negative Flag 	Set if bit 7 set
-	c.Flags.Negative = c.Accumulator&0x80 > 0
+	c.setNegativeA7()
+
+	// OLC's truth table is great, but the xor stuff is confusing
+	operandsLike := c.Accumulator&0x80 == c.M&0x80
+	sumUnlike := c.Accumulator&0x80 != sum&0x80
+	c.Flags.Overflow = operandsLike && sumUnlike
 
 	return 0
 }
@@ -72,7 +118,7 @@ func (c *Cpu) AND() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#AND
 	c.Accumulator &= c.M
 	c.setZero()
-	c.setNegativeM7()
+	c.setNegativeA7()
 	return 0
 }
 
@@ -89,27 +135,21 @@ func (c *Cpu) ASL() byte {
 // BCC - Branch if Carry Clear
 func (c *Cpu) BCC() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#BCC
-	if !c.Flags.Carry {
-		c.ProgramCounter += uint16(c.RelAddress)
-	}
+	c.branch(!c.Flags.Carry)
 	return 0
 }
 
 // BCS - Branch if Carry Set
 func (c *Cpu) BCS() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#BCS
-	if c.Flags.Carry {
-		c.ProgramCounter += uint16(c.RelAddress)
-	}
+	c.branch(c.Flags.Carry)
 	return 0
 }
 
 // BEQ - Branch if Equal
 func (c *Cpu) BEQ() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#BEQ
-	if c.Flags.Zero {
-		c.ProgramCounter += uint16(c.RelAddress)
-	}
+	c.branch(c.Flags.Zero)
 	return 0
 }
 
@@ -125,31 +165,28 @@ func (c *Cpu) BIT() byte {
 // BMI - Branch if Minus
 func (c *Cpu) BMI() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#BMI
-	if c.Flags.Negative {
-		c.ProgramCounter += uint16(c.RelAddress)
-	}
+	c.branch(c.Flags.Negative)
 	return 0
 }
 
 // BNE - Branch if Not Equal
 func (c *Cpu) BNE() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#BNE
-	if !c.Flags.Zero {
-		c.ProgramCounter += uint16(c.RelAddress)
-	}
+	c.branch(!c.Flags.Zero)
 	return 0
 }
 
 // BPL - Branch if Positive
 func (c *Cpu) BPL() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#BPL
-	if !c.Flags.Negative {
-		c.ProgramCounter += uint16(c.RelAddress)
-	}
+	c.branch(!c.Flags.Negative)
 	return 0
 }
 
 // BRK - Force Interrupt
+//
+// Note that the opcode for this instruction is 0x00. Thus if called, the
+// program will probably be halted.
 func (c *Cpu) BRK() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#BRK
 	c.ProgramCounter++
@@ -160,18 +197,14 @@ func (c *Cpu) BRK() byte {
 // BVC - Branch if Overflow Clear
 func (c *Cpu) BVC() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#BVC
-	if !c.Flags.Overflow {
-		c.ProgramCounter += uint16(c.RelAddress)
-	}
+	c.branch(!c.Flags.Overflow)
 	return 0
 }
 
 // BVS - Branch if Overflow Set
 func (c *Cpu) BVS() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#BVS
-	if c.Flags.Overflow {
-		c.ProgramCounter += uint16(c.RelAddress)
-	}
+	c.branch(c.Flags.Overflow)
 	return 0
 }
 
@@ -192,7 +225,7 @@ func (c *Cpu) CLD() byte {
 // CLI - Clear Interrupt Disable
 func (c *Cpu) CLI() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#CLI
-	c.Flags.Interrupt = false
+	c.Flags.DisableInterrupt = false
 	return 0
 }
 
@@ -259,7 +292,7 @@ func (c *Cpu) EOR() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#EOR
 	c.Accumulator ^= c.M
 	c.setZero()
-	c.Flags.Negative = c.Accumulator&0x80 > 0
+	c.setNegativeA7()
 	return 0
 }
 
@@ -306,7 +339,7 @@ func (c *Cpu) LDA() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#LDA
 	c.Accumulator = c.M
 	c.setZero()
-	c.Flags.Negative = c.Accumulator&0x80 > 0
+	c.setNegativeA7()
 	return 0
 }
 
@@ -349,28 +382,26 @@ func (c *Cpu) ORA() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#ORA
 	c.Accumulator |= c.M
 	c.setZero()
-	c.Flags.Negative = c.Accumulator&0x80 > 0
+	c.setNegativeA7()
 	return 0
 }
 
 // PHA - Push Accumulator
 func (c *Cpu) PHA() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#PHA
+	// + and | are both fine
 	stackAddr := 0x0100 | uint16(c.Stack) // TODO: seems often repeated
 	c.Write(stackAddr, c.Accumulator)
+	c.Stack-- // push = - after write, pull = + before read
 	return 0
 }
 
-// PHP - Push Processor Status
-func (c *Cpu) PHP() byte {
-	// https://www.nesdev.org/obelisk-6502-guide/reference.html#PHP
-	stackAddr := 0x0100 | uint16(c.Stack)
-
-	var F byte
+func (c *Cpu) flagsByte() byte {
+	var flags byte
 	for i, f := range []bool{
 		c.Flags.Carry,
 		c.Flags.Zero,
-		c.Flags.Interrupt,
+		c.Flags.DisableInterrupt,
 		c.Flags.Decimal,
 		c.Flags.B,
 		c.Flags.Unused,
@@ -378,47 +409,43 @@ func (c *Cpu) PHP() byte {
 		c.Flags.Negative,
 	} {
 		if f {
-			F |= 1 << i
+			flags += 1 << i
 		}
 	}
+	return flags
+}
 
-	c.Write(stackAddr, F)
+// PHP - Push Processor Status
+func (c *Cpu) PHP() byte {
+	// https://www.nesdev.org/obelisk-6502-guide/reference.html#PHP
+	stackAddr := 0x0100 | uint16(c.Stack)
+
+	c.Write(stackAddr, c.flagsByte())
+	c.Stack--
 	return 0
 }
 
 // PLA - Pull Accumulator
 func (c *Cpu) PLA() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#PLA
+	c.Stack++
 	stackAddr := 0x0100 | uint16(c.Stack)
 	c.Accumulator = c.Read(stackAddr)
+	c.setZero()
+	c.setNegativeA7()
 	return 0
 }
 
 // PLP - Pull Processor Status
 func (c *Cpu) PLP() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#PLP
+	c.Stack++
 	stackAddr := 0x0100 | uint16(c.Stack)
 	newFlags := c.Read(stackAddr)
 
-	// for i, f := range []bool{
-	// 	c.Flags.Carry,
-	// 	c.Flags.Zero,
-	// 	c.Flags.Interrupt,
-	// 	c.Flags.Decimal,
-	// 	c.Flags.B,
-	// 	c.Flags.Unused,
-	// 	c.Flags.Overflow,
-	// 	c.Flags.Negative,
-	// } {
-	// 	f = true
-	// 	if newFlags&(1<<i) > 0 {
-	// 		f = true
-	// 	}
-	// }
-
 	c.Flags.Carry = newFlags&(1<<0) > 0
 	c.Flags.Zero = newFlags&(1<<1) > 0
-	c.Flags.Interrupt = newFlags&(1<<2) > 0
+	c.Flags.DisableInterrupt = newFlags&(1<<2) > 0
 	c.Flags.Decimal = newFlags&(1<<3) > 0
 	c.Flags.B = newFlags&(1<<4) > 0
 	c.Flags.Unused = newFlags&(1<<5) > 0
@@ -463,14 +490,28 @@ func (c *Cpu) ROR() byte {
 func (c *Cpu) RTI() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#RTI
 	// invoked at the end of an interrupt
+
+	// restore flags from stack
 	c.PLP()
-	// TODO: something about the PC?
+
+	// hmm (OLC does this)
+	// c.Flags.B = !c.Flags.B
+	// c.Flags.Unused = !c.Flags.Unused
+
+	// restore the PC from stack
+	c.Stack++
+	col := c.Read(uint16(c.Stack))
+	c.Stack++
+	page := c.Read(uint16(c.Stack))
+	c.ProgramCounter = mask.Word(page, col)
+
 	return 0
 }
 
 // RTS - Return from Subroutine
 func (c *Cpu) RTS() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#RTS
+	c.Stack++
 	stackAddr := 0x0100 | uint16(c.Stack)
 	// The RTS instruction is used at the end of a subroutine to return to
 	// the calling routine. It pulls the program counter (minus one) from
@@ -483,24 +524,30 @@ func (c *Cpu) RTS() byte {
 func (c *Cpu) SBC() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#SBC
 
-	diff := c.Accumulator - c.M
-	if diff > c.Accumulator {
-		// C 	Carry Flag 	Set if overflow in bit 7
-		// "Set if overflow in bit 7" -- bit 7 of what: A, M, or A+M? i
-		// assume A+M for now
-		c.Flags.Carry = true
-	}
+	// wild guess?
+	// c.M = -c.M  // 256-M+1
+	c.M ^= 0xff // 256-M
+	c.ADC()
+	// if c.Flags.Carry {
+	// 	c.Accumulator -= 1
+	// }
 
-	c.Accumulator = diff
-	if !c.Flags.Carry {
-		c.Accumulator -= 1
-	}
-
-	c.setZero()
-	// V 	Overflow Flag 	Set if sign bit is incorrect
-	// c.Flags.Overflow = ???
-	// N 	Negative Flag 	Set if bit 7 set
-	c.Flags.Negative = c.Accumulator&0x80 > 0
+	// sum := c.Accumulator + c.M
+	// if sum < c.Accumulator {
+	// 	c.Flags.Carry = true
+	// }
+	//
+	// c.Accumulator = sum
+	// if c.Flags.Carry {
+	// 	c.Accumulator += 1 // just 1?
+	// }
+	//
+	// c.setZero()
+	// c.setNegativeA7()
+	//
+	// operandsLike := c.Accumulator&0x80 == c.M&0x80
+	// sumUnlike := c.Accumulator&0x80 != sum&0x80
+	// c.Flags.Overflow = operandsLike && sumUnlike
 
 	return 0
 }
@@ -522,7 +569,7 @@ func (c *Cpu) SED() byte {
 // SEI - Set Interrupt Disable
 func (c *Cpu) SEI() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#SEI
-	c.Flags.Interrupt = true
+	c.Flags.DisableInterrupt = true
 	return 0
 }
 
@@ -568,6 +615,7 @@ func (c *Cpu) TAY() byte {
 // TSX - Transfer Stack Pointer to X
 func (c *Cpu) TSX() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#TSX
+	c.Stack++
 	stackAddr := 0x0100 | uint16(c.Stack)
 	c.X = c.Read(stackAddr)
 	c.Flags.Zero = c.X == 0
@@ -580,7 +628,7 @@ func (c *Cpu) TXA() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#TXA
 	c.Accumulator = c.X
 	c.Flags.Zero = c.X == 0
-	c.Flags.Negative = c.Accumulator&0x80 > 0
+	c.setNegativeA7()
 	return 0
 }
 
@@ -589,6 +637,7 @@ func (c *Cpu) TXS() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#TXS
 	stackAddr := 0x0100 | uint16(c.Stack)
 	c.Write(stackAddr, c.X)
+	c.Stack--
 	return 0
 }
 
@@ -597,6 +646,6 @@ func (c *Cpu) TYA() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#TYA
 	c.Accumulator = c.Y
 	c.Flags.Zero = c.Y == 0
-	c.Flags.Negative = c.Accumulator&0x80 > 0
+	c.setNegativeA7()
 	return 0
 }
