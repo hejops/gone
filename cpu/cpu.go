@@ -176,6 +176,10 @@ func (c *Cpu) fetch(b byte) Opcode {
 //
 // The retrieved byte is stored in c.M, so that it can be used by the following
 // Instruction.
+//
+// c.Cycles is incremented immediately if a page cross occurs in AbsoluteX,
+// AbsoluteY, or IndirectY mode. For Relative mode, c.Cycles is incremented
+// conditionally in the Instruction itself.
 func (c *Cpu) decode(a AddressingMode) { // {{{
 
 	// https://www.ascii-code.com/
@@ -227,18 +231,11 @@ func (c *Cpu) decode(a AddressingMode) { // {{{
 		c.AbsAddress &= 0x00ff
 
 	case Relative:
+		// set the AbsAddress, but do not add Cycles here, deferring it
+		// to the branch instruction
+
 		// fetch a byte somewhere up to half a byte away from current
 		// absolute address (in either direction)
-
-		// Since a single signed byte value is used to indicate the
-		// adjustment, it can only be in the range -128 to +127
-		// a signed byte has leftmost bit of 1
-		// 0x01 0b0000_0001  1   1
-		// 0x00 0b0000_0000  0   0
-		// 0xff 0b1111_1111 -1 255
-		// 0xfe 0b1111_1110 -2 254
-		//
-		// https://www.simonv.fr/TypesConvert/?integers
 
 		rel := c.Read(c.ProgramCounter)
 		c.ProgramCounter++
@@ -256,9 +253,11 @@ func (c *Cpu) decode(a AddressingMode) { // {{{
 		// https://github.com/fogleman/nes/blob/3880f3400500b1ff2e89af4e12e90be46c73ae07/nes/cpu.go#L469
 		c.AbsAddress += uint16(rel)
 		if rel&0x80 == 0 {
+			// important: cycle adding is deferred to the branch condition
 			c.AbsAddress -= 0x0100
+			c.PageCrossed = true
 		}
-		c.RelAddress = int8(rel)
+		// c.RelAddress = int8(rel)
 
 	// 2 reads
 
@@ -285,7 +284,8 @@ func (c *Cpu) decode(a AddressingMode) { // {{{
 
 		c.AbsAddress += uint16(c.X)
 		if c.AbsAddress&0xff00 != uint16(page)<<8 {
-			c.PageCrossed = true
+			// c.PageCrossed = true
+			c.Cycles++
 		}
 
 	case AbsoluteY:
@@ -297,7 +297,8 @@ func (c *Cpu) decode(a AddressingMode) { // {{{
 
 		c.AbsAddress += uint16(c.Y)
 		if c.AbsAddress&0xff00 != uint16(page)<<8 {
-			c.PageCrossed = true
+			// c.PageCrossed = true
+			c.Cycles++
 		}
 
 	// 3 reads
@@ -333,7 +334,8 @@ func (c *Cpu) decode(a AddressingMode) { // {{{
 
 		c.AbsAddress += uint16(c.Y)
 		if c.AbsAddress&0xff00 != uint16(page)<<8 {
-			c.PageCrossed = true
+			// c.PageCrossed = true
+			c.Cycles++
 		}
 
 	// 4 reads
