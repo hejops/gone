@@ -4,7 +4,9 @@
 package cpu
 
 import (
-	"log"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"gone/mask"
@@ -21,6 +23,90 @@ var (
 	tick = 10e9 / 1789773 // cannot be inlined into time.Duration, even with cast
 	Tick = time.Nanosecond * time.Duration(tick)
 )
+
+// The Cpu has no memory of its own (aside from a number of small registers
+// which amount to about 7 bytes). Instead, the Cpu interfaces with a Bus that
+// provides memory.
+type Cpu struct {
+	Bus *mem.Bus
+
+	// Flags Flags
+
+	// https://problemkaputt.de/everynes.htm#cpuregistersandflags
+	// https://www.nesdev.org/wiki/CPU_ALL#CPU_2
+	// https://www.nesdev.org/wiki/Status_flags#Flags
+
+	// Flags are 8 bits that make up the status register (aka P register).
+	// B and Decimal are unused.
+	//
+	// 7654 3210
+	// NV1B DIZC
+	Flags struct {
+		Negative         bool // bit 7; only if signed ints are used
+		Overflow         bool // bit 6; only if signed ints are used
+		Unused           bool // bit 5
+		DisableInterrupt bool // bit 2
+		Zero             bool // bit 1
+		Carry            bool // bit 0
+		B                bool // bit 4; unused
+		Decimal          bool // bit 3; inherited from 6502, but unused by NES
+		// note: if numeric indexing is required, switch to `Flags byte`
+	}
+
+	// Status         byte // equivalent to Flags, compacted in a single byte
+
+	Accumulator byte // The Accumulator represents a byte value for immediate use, similar to a local variable
+	X           byte
+	Y           byte
+
+	// Stack instructions (PHA, PLA, PHP, PLP, JSR, RTS, BRK, RTI) always
+	// access the 01 page (0x0100-0x01ff). The Cpu can store a low byte in
+	// this register.
+	Stack byte
+
+	// The ProgramCounter is a 2-byte (word) memory address that increments
+	// (almost) continuously. The byte located at this address should
+	// provide the CPU with an Opcode that specifies the next instruction
+	// to execute.
+	ProgramCounter uint16
+	// https://en.wikipedia.org/wiki/Program_counter
+	// https://www.youtube.com/watch?v=Z5JC9Ve1sfI
+	// when is PC ever decremented/reset?
+
+	M           byte // after AddressingMode
+	AbsAddress  uint16
+	PageCrossed bool // if true AND branch succeeded, add 1 extra cycle to current instruction
+	Cycles      byte // decrements to 0, at which point a new instruction is executed
+	// Opcode     Opcode // current opcode (not really necessary? maybe for interrupt purposes)
+	// RelAddress  int8 // relative to current PC, used exclusively in brancing instructions (probably not needed?)
+}
+
+// Read reads one byte from the given addr. The addr is typically supplied by
+// the program.
+func (c *Cpu) Read(addr uint16) byte {
+	// note: we usually return byte, but Cpu typically has to cast
+	// ('concats') bytes into uint16 to form mem addresses
+	return c.Bus.Read(addr, true)
+}
+
+// Write passes data to the Bus, which actually performs the write.
+func (c *Cpu) Write(
+	addr uint16, // addresses are 2 bytes (16 bits) wide; see xxd
+	data byte,
+) {
+	c.Bus.Write(addr, data)
+}
+
+// LoadProgram reads a slice of bytes and places it at the given addr.
+func (c *Cpu) LoadProgram(program []byte, addr uint16) {
+	for i, s := range strings.Fields(string(program)) {
+		b, err := strconv.ParseInt(s, 16, 16)
+		if err != nil {
+			panic(err)
+		}
+		c.Bus.FakeRam[addr+uint16(i)] = byte(b)
+	}
+}
 
 // An AddressingMode tells the Cpu where to access (look for) a given byte of
 // memory. There are 13 possible modes.
@@ -89,86 +175,13 @@ const (
 // 	Negative
 // )
 
-// The Cpu has no memory of its own (aside from a number of small registers
-// which amount to about 7 bytes). Instead, the Cpu interfaces with a Bus that
-// provides memory.
-type Cpu struct {
-	Bus *mem.Bus
-
-	// Flags Flags
-
-	// https://problemkaputt.de/everynes.htm#cpuregistersandflags
-	// https://www.nesdev.org/wiki/CPU_ALL#CPU_2
-	// https://www.nesdev.org/wiki/Status_flags#Flags
-
-	// Flags are 8 bits that make up the status register (aka P register).
-	// B and Decimal are unused.
-	//
-	// 7654 3210
-	// NV1B DIZC
-	Flags struct {
-		Negative  bool // bit 7; only if signed ints are used
-		Overflow  bool // bit 6; only if signed ints are used
-		Unused    bool // bit 5
-		Interrupt bool // bit 2; if true, disables interrupts
-		Zero      bool // bit 1
-		Carry     bool // bit 0
-		B         bool // bit 4; unused
-		Decimal   bool // bit 3; inherited from 6502, but unused by NES
-		// note: if numeric indexing is required, switch to `Flags byte`
-	}
-
-	// Status         byte // equivalent to Flags, compacted in a single byte
-
-	Accumulator byte // The Accumulator represents a byte value for immediate use, similar to a local variable
-	X           byte
-	Y           byte
-
-	// Stack instructions (PHA, PLA, PHP, PLP, JSR, RTS, BRK, RTI) always
-	// access the 01 page (0x0100-0x01ff). The Cpu can store a low byte in
-	// this register.
-	Stack byte
-
-	// The ProgramCounter is a 2-byte (word) memory address that increments
-	// (almost) continuously. The byte located at this address should
-	// provide the CPU with an Opcode that specifies the next instruction
-	// to execute.
-	ProgramCounter uint16
-	// https://en.wikipedia.org/wiki/Program_counter
-	// https://www.youtube.com/watch?v=Z5JC9Ve1sfI
-	// when is PC ever decremented/reset?
-
-	M           byte // after AddressingMode
-	AbsAddress  uint16
-	RelAddress  int8 // relative to current PC, used exclusively in brancing instructions
-	PageCrossed bool
-	Cycles      byte // decrements to 0, at which point a new instruction is executed
-	// Opcode     Opcode // current opcode (not really necessary? maybe for interrupt purposes)
-}
-
-// Read reads one byte from the given addr. The addr is typically supplied by
-// the program.
-func (c *Cpu) Read(addr uint16) byte {
-	// note: we usually return byte, but Cpu typically has to cast
-	// ('concats') bytes into uint16 to form mem addresses
-	return c.Bus.Read(addr, true)
-}
-
-// Write passes data to the Bus, which actually performs the write.
-func (c *Cpu) Write(
-	addr uint16, // addresses are 2 bytes (16 bits) wide; see xxd
-	data byte,
-) {
-	c.Bus.Write(addr, data)
-}
-
-func (c *Cpu) fetch(b byte) Opcode {
-	// if illegal byte, do nothing?
+func (c *Cpu) fetch(b byte) (Opcode, error) {
 	oc, legal := Opcodes[b]
 	if !legal {
-		log.Fatalln("Illegal byte supplied:", b)
+		// TODO: do we just noop and PC++?
+		return Opcode{}, fmt.Errorf("Illegal byte supplied: %x", b)
 	}
-	return oc
+	return oc, nil
 }
 
 // decode fetches a byte of data from memory, accounting for the addressing
@@ -394,7 +407,7 @@ func (c *Cpu) decode(a AddressingMode) { // {{{
 // tick runs a single fetch/decode/execute cycle, setting c.Cycles to the
 // appropriate number. The Cpu must 'wait' this number of cycles before the
 // next tick call.
-func (c *Cpu) tick() {
+func (c *Cpu) tick() error {
 	// https://en.wikipedia.org/wiki/Instruction_cycle#Summary_of_stages
 
 	// like OLC, this is not clock cycle accurate; we perform all the work
@@ -405,7 +418,10 @@ func (c *Cpu) tick() {
 	// https://old.reddit.com/r/EmuDev/comments/pkgxws/what_cycles_really_are/hc3fqcf/
 
 	b := c.Read(c.ProgramCounter)
-	op := c.fetch(b)
+	op, err := c.fetch(b)
+	if err != nil {
+		return err
+	}
 	c.ProgramCounter++ // decoding the opcode always requires 1 cycle
 
 	// x := c.ProgramCounter
@@ -422,12 +438,17 @@ func (c *Cpu) tick() {
 		c.Cycles++
 		c.PageCrossed = false
 	}
+
+	return nil
 }
 
 func (c *Cpu) loop() {
 	for {
 		if c.Cycles == 0 {
-			c.tick()
+			err := c.tick()
+			if err != nil {
+				panic(err)
+			}
 		}
 		time.Sleep(Tick)
 		c.Cycles--
