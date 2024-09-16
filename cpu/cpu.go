@@ -435,6 +435,86 @@ func (c *Cpu) loop() {
 	}
 }
 
-func (c *Cpu) irq()   {} // async interrupt (after curr instr; may be ignored)
-func (c *Cpu) nmi()   {} // async interrupt (after curr instr; cannot be ignored)
-func (c *Cpu) reset() {} // async interrupt
+// fffa nmi
+// fffc reset
+// fffe irq
+
+// http://www.6502.org/users/andre/65k/af65002/af65002int.html
+// https://superuser.com/a/606770
+// https://www.pagetable.com/?p=410
+
+func (c *Cpu) nmi() {
+	// async interrupt (after curr instr; cannot be ignored)
+	c.Write(0x0100|uint16(c.Stack), byte(c.ProgramCounter>>8)) // store high byte first
+	c.Stack--
+	c.Write(0x0100|uint16(c.Stack), byte(c.ProgramCounter))
+	c.Stack--
+
+	c.Flags.B = false
+	c.Flags.Unused = true // not sure if necessary
+	c.Flags.DisableInterrupt = true
+	c.Write(0x0100|uint16(c.Stack), c.flagsByte())
+	c.Stack--
+
+	c.AbsAddress = 0xfffa
+	col := c.Read(c.AbsAddress)
+	page := c.Read(c.AbsAddress + 1)
+	c.ProgramCounter = mask.Word(page, col)
+
+	c.Cycles = 8
+}
+
+func (c *Cpu) reset() {
+	// async interrupt
+
+	c.Accumulator = 0
+	c.X = 0
+	c.Y = 0
+
+	c.Stack = 0xfd // decremented 3x (from 00) -- TODO: better citation needed
+
+	c.Flags.Negative = false
+	c.Flags.Overflow = false
+	c.Flags.Unused = true // not sure if necessary
+	c.Flags.DisableInterrupt = false
+	c.Flags.Zero = false
+	c.Flags.Carry = false
+	c.Flags.B = false
+	c.Flags.Decimal = false
+
+	c.AbsAddress = 0xfffc
+	col := c.Read(c.AbsAddress)
+	page := c.Read(c.AbsAddress + 1)
+	c.ProgramCounter = mask.Word(page, col)
+
+	c.M = 0
+	c.AbsAddress = 0
+	c.Cycles = 8
+}
+
+func (c *Cpu) irq() {
+	// async interrupt (after curr instr; may be ignored)
+	if c.Flags.DisableInterrupt {
+		return
+	}
+
+	// https://www.nesdev.org/wiki/CPU_interrupts#IRQ_and_NMI_tick-by-tick_execution
+
+	c.Write(0x0100|uint16(c.Stack), byte(c.ProgramCounter>>8)) // store high byte first
+	c.Stack--
+	c.Write(0x0100|uint16(c.Stack), byte(c.ProgramCounter))
+	c.Stack--
+
+	c.Flags.B = false
+	c.Flags.Unused = true // not sure if necessary
+	c.Flags.DisableInterrupt = true
+	c.Write(0x0100|uint16(c.Stack), c.flagsByte())
+	c.Stack--
+
+	c.AbsAddress = 0xfffe // not fffc (reset)
+	col := c.Read(c.AbsAddress)
+	page := c.Read(c.AbsAddress + 1)
+	c.ProgramCounter = mask.Word(page, col)
+
+	c.Cycles = 7
+}
