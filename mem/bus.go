@@ -27,14 +27,14 @@ type Bus struct {
 //  |       |       |       |
 //  |------------------------------------ BUS 2
 
-func (b Bus) Write(
+func (b *Bus) Write(
 	addr uint16, // addresses are 2 bytes wide
 	data byte,
 ) {
 	b.FakeRam[addr] = data
 }
 
-func (b Bus) Read(addr uint16, readonly bool) byte { return b.FakeRam[addr] }
+func (b *Bus) Read(addr uint16, readonly bool) byte { return b.FakeRam[addr] }
 
 // func newBus() Bus {
 // 	return Bus{}
