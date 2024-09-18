@@ -220,9 +220,8 @@ func (c *Cpu) decode(a AddressingMode) { // {{{
 	// does.
 
 	case Immediate:
-		// "data is supplied as part of the instruction -- the next byte"
-		c.ProgramCounter++
 		c.AbsAddress = c.ProgramCounter
+		c.ProgramCounter++
 
 	// 1 read
 
