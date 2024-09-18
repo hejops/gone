@@ -30,13 +30,18 @@ type Opcode struct {
 	// this is encapsulated, but unclear/misleading
 	// Instruction         func(Instruction) byte
 
-	// Args are passed to the func via the M field of c, not func args.
-	// Generally, at most one arg is required.
+	// An Instruction usually modifies or copies register(s). Args (usually
+	// just a byte) are passed to the func implicitly via the M field of c,
+	// -not- explicitly via func args.
+	//
+	// With the sole exception of BRK, Instructions -never- increment the
+	// PC. Cycles are incurred -only- in branching Instructions, and only
+	// if the condition succeeds.
 	//
 	// The byte returned by the Instruction call is not memory data. It
-	// only indicates how many extra Cycles to wait. This number varies
-	// greatly, depending on the AddressingMode, and the Instruction
-	// itself.
+	// only indicates how many extra Cycles to wait. (This is from OLC, and
+	// may be rethought) This number varies greatly, depending on the
+	// AddressingMode, and the Instruction itself.
 	//
 	// Theoretically, the returned byte may not be needed, since it is
 	// already stored in Opcode.Cycles.
@@ -49,8 +54,8 @@ type Opcode struct {
 	// CrossesPageBoundary bool // if true, increases Cycles (i.e. wait more ticks)
 }
 
-// The Opcodes table lists all 128 (?) byte values recognised by the Cpu. 56
-// unique instructions.
+// The Opcodes table lists all 151 (?) byte values recognised by the Cpu. These
+// values are mapped to 56 unique instructions.
 var Opcodes = map[byte]Opcode{
 	// Generated from http://www.6502.org/tutorials/6502opcodes.html
 
@@ -70,18 +75,6 @@ var Opcodes = map[byte]Opcode{
 
 	// TODO: is map index or slice index faster? slice index requires slice
 	// of len 256, map doesn't
-
-	// 0x65: {Instruction: ADC}, // requires global (or at least packaged) func
-	// 0x69: {Instruction: C.ADC}, // requires global C (var C Cpu)
-
-	// 0x69: {Instruction: (*Cpu).ADC, Cycles: 2, AddressingMode: Immediate},
-	// 0x65: {Instruction: (*Cpu).ADC, Cycles: 3, AddressingMode: ZeroPage},
-	// 0x75: {Instruction: (*Cpu).ADC, Cycles: 4, AddressingMode: ZeroPageX},
-	// 0x6d: {Instruction: (*Cpu).ADC, Cycles: 4, AddressingMode: Absolute},
-	// 0x7d: {Instruction: (*Cpu).ADC, Cycles: 4, AddressingMode: AbsoluteX},
-	// 0x79: {Instruction: (*Cpu).ADC, Cycles: 4, AddressingMode: AbsoluteY},
-	// 0x61: {Instruction: (*Cpu).ADC, Cycles: 6, AddressingMode: IndirectX},
-	// 0x71: {Instruction: (*Cpu).ADC, Cycles: 5, AddressingMode: IndirectY},
 
 	0x69: {Instruction: (*Cpu).ADC, Name: "ADC", Cycles: 2, AddressingMode: Immediate},
 	0x65: {Instruction: (*Cpu).ADC, Name: "ADC", Cycles: 3, AddressingMode: ZeroPage},
@@ -199,19 +192,47 @@ var Opcodes = map[byte]Opcode{
 	0x99: {Instruction: (*Cpu).STA, Name: "STA", Cycles: 5, AddressingMode: AbsoluteY},
 	0x81: {Instruction: (*Cpu).STA, Name: "STA", Cycles: 6, AddressingMode: IndirectX},
 	0x91: {Instruction: (*Cpu).STA, Name: "STA", Cycles: 6, AddressingMode: IndirectY},
-
-	//.TOD, Name:"TOD"O:
-	// ptr): {Instruction: (*Cpu).X to, Cycles: 2, AddressingMode:.TXS, Name:"TXS"(Transf},
-	// X): {Instruction: (*Cpu).Stac, Cycles: 2, AddressingMode:.TSX, Name:"TSX"(Transf},
-	// Accumulator): {Instruction: (*Cpu).mula, Cycles: 3, AddressingMode:.PHA, Name:"PHA"(PusHA},
-	// Accumulator): {Instruction: (*Cpu).mula, Cycles: 4, AddressingMode:.PLA, Name:"PLA"(PuLlA},
-	// status): {Instruction: (*Cpu).esso, Cycles: 3, AddressingMode:.PHP, Name:"PHP"(PusHP},
-	// status): {Instruction: (*Cpu).esso, Cycles: 4, AddressingMode:.PLP, Name:"PLP"(PuLlP},
-
 	0x86: {Instruction: (*Cpu).STX, Name: "STX", Cycles: 3, AddressingMode: ZeroPage},
 	0x96: {Instruction: (*Cpu).STX, Name: "STX", Cycles: 4, AddressingMode: ZeroPageY},
 	0x8E: {Instruction: (*Cpu).STX, Name: "STX", Cycles: 4, AddressingMode: Absolute},
 	0x84: {Instruction: (*Cpu).STY, Name: "STY", Cycles: 3, AddressingMode: ZeroPage},
 	0x94: {Instruction: (*Cpu).STY, Name: "STY", Cycles: 4, AddressingMode: ZeroPageX},
 	0x8C: {Instruction: (*Cpu).STY, Name: "STY", Cycles: 4, AddressingMode: Absolute},
+
+	// clear, set
+	0x18: {Instruction: (*Cpu).CLC, Name: "CLC", Cycles: 2, AddressingMode: Implied},
+	0x38: {Instruction: (*Cpu).SEC, Name: "SEC", Cycles: 2, AddressingMode: Implied},
+	0x58: {Instruction: (*Cpu).CLI, Name: "CLI", Cycles: 2, AddressingMode: Implied},
+	0x78: {Instruction: (*Cpu).SEI, Name: "SEI", Cycles: 2, AddressingMode: Implied},
+	0xB8: {Instruction: (*Cpu).CLV, Name: "CLV", Cycles: 2, AddressingMode: Implied},
+	0xD8: {Instruction: (*Cpu).CLD, Name: "CLD", Cycles: 2, AddressingMode: Implied},
+	0xF8: {Instruction: (*Cpu).SED, Name: "SED", Cycles: 2, AddressingMode: Implied},
+
+	// increment, decrement, transfer
+	0xAA: {Instruction: (*Cpu).TAX, Name: "TAX", Cycles: 2, AddressingMode: Implied},
+	0x8A: {Instruction: (*Cpu).TXA, Name: "TXA", Cycles: 2, AddressingMode: Implied},
+	0xCA: {Instruction: (*Cpu).DEX, Name: "DEX", Cycles: 2, AddressingMode: Implied},
+	0xE8: {Instruction: (*Cpu).INX, Name: "INX", Cycles: 2, AddressingMode: Implied},
+	0xA8: {Instruction: (*Cpu).TAY, Name: "TAY", Cycles: 2, AddressingMode: Implied},
+	0x98: {Instruction: (*Cpu).TYA, Name: "TYA", Cycles: 2, AddressingMode: Implied},
+	0x88: {Instruction: (*Cpu).DEY, Name: "DEY", Cycles: 2, AddressingMode: Implied},
+	0xC8: {Instruction: (*Cpu).INY, Name: "INY", Cycles: 2, AddressingMode: Implied},
+
+	// branch
+	0x10: {Instruction: (*Cpu).BPL, Name: "BPL", Cycles: 2, AddressingMode: Relative},
+	0x30: {Instruction: (*Cpu).BMI, Name: "BMI", Cycles: 2, AddressingMode: Relative},
+	0x50: {Instruction: (*Cpu).BVC, Name: "BVC", Cycles: 2, AddressingMode: Relative},
+	0x70: {Instruction: (*Cpu).BVS, Name: "BVS", Cycles: 2, AddressingMode: Relative},
+	0x90: {Instruction: (*Cpu).BCC, Name: "BCC", Cycles: 2, AddressingMode: Relative},
+	0xB0: {Instruction: (*Cpu).BCS, Name: "BCS", Cycles: 2, AddressingMode: Relative},
+	0xD0: {Instruction: (*Cpu).BNE, Name: "BNE", Cycles: 2, AddressingMode: Relative},
+	0xF0: {Instruction: (*Cpu).BEQ, Name: "BEQ", Cycles: 2, AddressingMode: Relative},
+
+	// stack
+	0x9A: {Instruction: (*Cpu).TXS, Name: "TXS", Cycles: 2, AddressingMode: Implied},
+	0xBA: {Instruction: (*Cpu).TSX, Name: "TSX", Cycles: 2, AddressingMode: Implied},
+	0x48: {Instruction: (*Cpu).PHA, Name: "PHA", Cycles: 3, AddressingMode: Implied},
+	0x68: {Instruction: (*Cpu).PLA, Name: "PLA", Cycles: 4, AddressingMode: Implied},
+	0x08: {Instruction: (*Cpu).PHP, Name: "PHP", Cycles: 3, AddressingMode: Implied},
+	0x28: {Instruction: (*Cpu).PLP, Name: "PLP", Cycles: 4, AddressingMode: Implied},
 }
