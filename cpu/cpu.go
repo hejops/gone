@@ -456,11 +456,15 @@ func (c *Cpu) loop() {
 // fffa nmi
 // fffc reset
 // fffe irq
+//
+// if these addresses are 0 at the time of interrupt, the result is jumping to
+// 0x0, iterating through the zero page until the first 0; probably UB?
 
 // http://www.6502.org/users/andre/65k/af65002/af65002int.html
 // https://superuser.com/a/606770
 // https://www.pagetable.com/?p=410
 
+// Jumps to the address found at 0xfffa. This interrupt cannot be ignored.
 func (c *Cpu) nmi() {
 	// async interrupt (after curr instr; cannot be ignored)
 	c.Write(0x0100|uint16(c.Stack), byte(c.ProgramCounter>>8)) // store high byte first
@@ -482,6 +486,7 @@ func (c *Cpu) nmi() {
 	c.Cycles = 8
 }
 
+// Jumps to the address found at 0xfffc.
 func (c *Cpu) reset() {
 	// async interrupt
 
@@ -510,8 +515,9 @@ func (c *Cpu) reset() {
 	c.Cycles = 8
 }
 
+// Jumps to the address found at 0xfffe. This interrupt may be ignored if the
+// DisableInterrupt flag is true.
 func (c *Cpu) irq() {
-	// async interrupt (after curr instr; may be ignored)
 	if c.Flags.DisableInterrupt {
 		return
 	}
