@@ -73,10 +73,11 @@ type Cpu struct {
 	// https://www.youtube.com/watch?v=Z5JC9Ve1sfI
 	// when is PC ever decremented/reset?
 
-	M           byte // after AddressingMode
-	AbsAddress  uint16
-	PageCrossed bool // if true AND branch succeeded, add 1 extra cycle to current instruction
-	Cycles      byte // decrements to 0, at which point a new instruction is executed
+	AbsAddress uint16 // address that is set after Cpu.decode
+	M          byte   // data that is set after Cpu.decode
+	Cycles     byte   // decrements to 0, at which point a new instruction is executed
+
+	// PageCrossed bool // if true AND branch succeeded, add 1 extra cycle to current instruction
 	// Opcode     Opcode // current opcode (not really necessary? maybe for interrupt purposes)
 	// RelAddress  int8 // relative to current PC, used exclusively in brancing instructions (probably not needed?)
 }
@@ -433,6 +434,13 @@ func (c *Cpu) tick() error {
 		c.Cycles++
 		c.PageCrossed = false
 	}
+
+	c.Cycles = op.Cycles
+
+	// if c.PageCrossed {
+	// 	c.Cycles++
+	// 	c.PageCrossed = false
+	// }
 
 	return nil
 }
