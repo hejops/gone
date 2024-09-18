@@ -48,11 +48,10 @@ func (c *Cpu) branch(cond bool) {
 		log.Println("will branch to", c.AbsAddress)
 
 		c.Cycles++
-		// c.ProgramCounter += uint16(c.RelAddress)
+		pageCrossed := c.AbsAddress&0xff00 != c.ProgramCounter&0xff00
 		c.ProgramCounter = c.AbsAddress
-		if c.PageCrossed {
+		if pageCrossed {
 			c.Cycles++
-			c.PageCrossed = false
 		}
 	}
 }

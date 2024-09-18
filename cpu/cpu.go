@@ -251,25 +251,21 @@ func (c *Cpu) decode(a AddressingMode) { // {{{
 
 		rel := c.Read(c.ProgramCounter)
 		c.ProgramCounter++
+		// log.Println("rel addr:", rel)
+
+		// https://github.com/fogleman/nes/blob/3880f3400500b1ff2e89af4e12e90be46c73ae07/nes/cpu.go#L469
+		c.AbsAddress = c.ProgramCounter + uint16(rel)
+		// log.Println("destined abs addr is now:", c.AbsAddress)
+
 		// this comparison checks the leftmost bit of rel. in concrete
 		// terms, &0x80 returns 128 for all rel>=128 (in which case
 		// move back a page), 0 otherwise (in which case we use rel as
 		// is and move forward)
-
-		// if rel&0x80 == 0 {
-		// 	c.AbsAddress += uint16(rel) - 0x0100
-		// } else {
-		// 	c.AbsAddress += uint16(rel)
-		// }
-
-		// https://github.com/fogleman/nes/blob/3880f3400500b1ff2e89af4e12e90be46c73ae07/nes/cpu.go#L469
-		c.AbsAddress += uint16(rel)
-		if rel&0x80 == 0 {
+		if rel&0x80 > 0 {
 			// important: cycle adding is deferred to the branch condition
 			c.AbsAddress -= 0x0100
-			c.PageCrossed = true
+			log.Println("jumped back, destined abs addr is now:", c.AbsAddress)
 		}
-		// c.RelAddress = int8(rel)
 
 	// 2 reads
 
