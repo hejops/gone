@@ -4,7 +4,9 @@
 package cpu
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -176,10 +178,12 @@ const (
 // 	Negative
 // )
 
+// fetch translates b (read from the program) into an Opcode. This does not
+// involve any PC or Cycles increments.
 func (c *Cpu) fetch(b byte) (Opcode, error) {
 	oc, legal := Opcodes[b]
 	if !legal {
-		// TODO: do we just noop and PC++?
+		// empty opcode or NOP?
 		return Opcode{}, fmt.Errorf("Illegal byte supplied: %x", b)
 	}
 	return oc, nil
@@ -278,11 +282,12 @@ func (c *Cpu) decode(a AddressingMode) { // {{{
 		// read becomes the low byte (column).
 		// https://stackoverflow.com/a/77683792
 
-		col := c.Read(c.ProgramCounter) // 0xff
+		col := c.Read(c.ProgramCounter) // 0x00ff
 		c.ProgramCounter++
 		page := c.Read(c.ProgramCounter) // 0xff00
 		c.ProgramCounter++
 		c.AbsAddress = mask.Word(page, col)
+		// log.Println("abs addr will be", c.AbsAddress)
 
 	case AbsoluteX:
 		col := c.Read(c.ProgramCounter)
@@ -293,7 +298,6 @@ func (c *Cpu) decode(a AddressingMode) { // {{{
 
 		c.AbsAddress += uint16(c.X)
 		if c.AbsAddress&0xff00 != uint16(page)<<8 {
-			// c.PageCrossed = true
 			c.Cycles++
 		}
 
@@ -306,7 +310,6 @@ func (c *Cpu) decode(a AddressingMode) { // {{{
 
 		c.AbsAddress += uint16(c.Y)
 		if c.AbsAddress&0xff00 != uint16(page)<<8 {
-			// c.PageCrossed = true
 			c.Cycles++
 		}
 
@@ -343,7 +346,6 @@ func (c *Cpu) decode(a AddressingMode) { // {{{
 
 		c.AbsAddress += uint16(c.Y)
 		if c.AbsAddress&0xff00 != uint16(page)<<8 {
-			// c.PageCrossed = true
 			c.Cycles++
 		}
 
@@ -415,24 +417,22 @@ func (c *Cpu) tick() error {
 
 	b := c.Read(c.ProgramCounter)
 	op, err := c.fetch(b)
+	c.ProgramCounter++ // decoding the opcode always requires 1 cycle, presumably even if unrecognised
 	if err != nil {
-		return err
+		return nil // TODO: just noop and continue?
+		// return err
 	}
-	c.ProgramCounter++ // decoding the opcode always requires 1 cycle
 
-	// x := c.ProgramCounter
 	c.decode(op.AddressingMode)
-	// elapsed := c.ProgramCounter - x // TODO: then what?
-	// _ = elapsed
 
-	// executing the opcode requires another ?-? cycles
 	op.Instruction(c)
 	// c.execute(op.Instruction)
 
-	c.Cycles = op.Cycles
-	if c.PageCrossed {
-		c.Cycles++
-		c.PageCrossed = false
+	// TODO: does M need to be zeroed after instruction?
+
+	// 00 -> BRK -> nmi with fffa unset -> goto addr 0x0000 -> infinite 00 loop
+	if c.ProgramCounter == 0 && c.Bus.FakeRam[c.ProgramCounter] == 0 {
+		return errors.New("Infinite loop; program terminated")
 	}
 
 	c.Cycles = op.Cycles
@@ -450,6 +450,7 @@ func (c *Cpu) loop() {
 		if c.Cycles == 0 {
 			err := c.tick()
 			if err != nil {
+				// continue
 				panic(err)
 			}
 		}
