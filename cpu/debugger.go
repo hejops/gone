@@ -2,6 +2,7 @@ package cpu
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -23,7 +24,10 @@ const pages = 65536 / 16
 // Init is the first function that will be called. It returns an optional
 // initial command. To not perform an initial command return nil.
 func (m model) Init() tea.Cmd {
+	log.Println("started debugger:", m.program)
 	m.cpu.LoadProgram([]byte(m.program), m.offset)
+	m.cpu.Bus.FakeRam[0xfffc] = 0x00 // reset
+	m.cpu.Bus.FakeRam[0xfffd] = 0x80 // ?
 	m.cpu.ProgramCounter = m.offset
 	return nil
 }
@@ -91,9 +95,18 @@ func (m model) status() string {
 			flags += "  "
 		}
 	}
+
+	mem := fmt.Sprintf(
+		` M: %x`,
+		m.cpu.Bus.FakeRam[m.cpu.AbsAddress],
+	)
+	if m.cpu.ProgramCounter-m.cpu.AbsAddress > 2 {
+		mem += fmt.Sprintf(` (at %04x)`, m.cpu.AbsAddress)
+	}
+
 	return fmt.Sprintf(`
 PC: %x (%x)
- M: %x
+%s
  A: %x
  X: %x
  Y: %x
@@ -101,7 +114,7 @@ N V _ B D I Z C
 `,
 		m.cpu.ProgramCounter,
 		m.prevPC,
-		m.cpu.M,
+		mem,
 		m.cpu.Accumulator,
 		m.cpu.X,
 		m.cpu.Y,
@@ -142,6 +155,7 @@ func (m model) View() string {
 		),
 		"",
 		// strconv.FormatInt(int64(m.cpu.ProgramCounter), 16),
+		// TODO: addrmode int -> name
 		spew.Sdump(Opcodes[m.cpu.Bus.FakeRam[m.cpu.ProgramCounter]]),
 	)
 }
@@ -149,6 +163,9 @@ func (m model) View() string {
 // Debug loads the program into memory at the given offset, then starts an
 // interactive TUI.
 func (c *Cpu) Debug(program []byte, offset uint16) {
+	lf, _ := tea.LogToFile("/tmp/gone.log", "")
+	defer lf.Close()
+
 	m, err := tea.NewProgram(model{
 		cpu:     c,
 		program: program,
