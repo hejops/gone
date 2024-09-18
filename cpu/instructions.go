@@ -1,6 +1,10 @@
 package cpu
 
-import "gone/mask"
+import (
+	"log"
+
+	"gone/mask"
+)
 
 // all function signatures were automatically generated from
 // https://www.nesdev.org/obelisk-6502-guide/reference.html
@@ -30,14 +34,10 @@ import "gone/mask"
 
 // helper funcs for flags
 
-// Set Negative if M7 = 1
-func (c *Cpu) setNegativeM7() { c.Flags.Negative = c.M&0x80 > 0 }
-
-// Set Negative if A7 = 1
-func (c *Cpu) setNegativeA7() { c.Flags.Negative = c.Accumulator&0x80 > 0 }
-
-// Set Zero if Accumulator = 0
-func (c *Cpu) setZero() { c.Flags.Zero = c.Accumulator == 0 }
+func (c *Cpu) setNZ(b byte) {
+	c.Flags.Zero = b == 0
+	c.Flags.Negative = b&0x80 > 0
+}
 
 func (c *Cpu) branch(cond bool) {
 	// all Branch instructions add 1 cycle if the condition evaluates to
@@ -45,6 +45,8 @@ func (c *Cpu) branch(cond bool) {
 	// to false, no action is taken, and no cycles are added
 
 	if cond {
+		log.Println("will branch to", c.AbsAddress)
+
 		c.Cycles++
 		// c.ProgramCounter += uint16(c.RelAddress)
 		c.ProgramCounter = c.AbsAddress
@@ -55,10 +57,12 @@ func (c *Cpu) branch(cond bool) {
 	}
 }
 
-// TODO: all instructions should PC++?
+// no instructions should ever PC++
 
-// ADC - Add with Carry
+// ADC - Add with Carry (A += M)
 func (c *Cpu) ADC() byte {
+	// 0x18
+	// 0x30
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#ADC
 
 	// this, along with SBC, are the most complicated instructions
@@ -102,8 +106,7 @@ func (c *Cpu) ADC() byte {
 		c.Accumulator += 1 // just 1?
 	}
 
-	c.setZero()
-	c.setNegativeA7()
+	c.setNZ(c.Accumulator)
 
 	// OLC's truth table is great, but the xor stuff is confusing
 	operandsLike := c.Accumulator&0x80 == c.M&0x80
@@ -117,8 +120,7 @@ func (c *Cpu) ADC() byte {
 func (c *Cpu) AND() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#AND
 	c.Accumulator &= c.M
-	c.setZero()
-	c.setNegativeA7()
+	c.setNZ(c.Accumulator)
 	return 0
 }
 
@@ -127,8 +129,7 @@ func (c *Cpu) ASL() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#ASL
 	c.Flags.Carry = c.M&0x80 > 0 // old bit 7
 	c.M <<= 2
-	c.setZero()
-	c.setNegativeM7()
+	c.setNZ(c.M)
 	return 0
 }
 
@@ -156,8 +157,9 @@ func (c *Cpu) BEQ() byte {
 // BIT - Bit Test
 func (c *Cpu) BIT() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#BIT
+	// result of A&M is -not- kept
 	c.Flags.Zero = c.M&c.Accumulator > 0
-	c.setNegativeM7()
+	c.Flags.Negative = c.M&0x80 > 0 // bit 7 set
 	c.Flags.Overflow = c.M&0x40 > 0 // bit 6 set
 	return 0
 }
@@ -267,7 +269,7 @@ func (c *Cpu) CPY() byte {
 func (c *Cpu) DEC() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#DEC
 	c.M--
-	c.setNegativeM7()
+	c.setNZ(c.M)
 	return 0
 }
 
@@ -275,7 +277,7 @@ func (c *Cpu) DEC() byte {
 func (c *Cpu) DEX() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#DEX
 	c.X--
-	c.Flags.Negative = c.X&0x80 > 0
+	c.setNZ(c.X)
 	return 0
 }
 
@@ -283,7 +285,7 @@ func (c *Cpu) DEX() byte {
 func (c *Cpu) DEY() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#DEY
 	c.Y--
-	c.Flags.Negative = c.Y&0x80 > 0
+	c.setNZ(c.Y)
 	return 0
 }
 
@@ -291,8 +293,7 @@ func (c *Cpu) DEY() byte {
 func (c *Cpu) EOR() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#EOR
 	c.Accumulator ^= c.M
-	c.setZero()
-	c.setNegativeA7()
+	c.setNZ(c.Accumulator)
 	return 0
 }
 
@@ -300,7 +301,7 @@ func (c *Cpu) EOR() byte {
 func (c *Cpu) INC() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#INC
 	c.M++
-	c.setNegativeM7()
+	c.setNZ(c.M)
 	return 0
 }
 
@@ -308,7 +309,7 @@ func (c *Cpu) INC() byte {
 func (c *Cpu) INX() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#INX
 	c.X++
-	c.Flags.Negative = c.X&0x80 > 0
+	c.setNZ(c.X)
 	return 0
 }
 
@@ -316,7 +317,7 @@ func (c *Cpu) INX() byte {
 func (c *Cpu) INY() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#INY
 	c.Y++
-	c.Flags.Negative = c.Y&0x80 > 0
+	c.setNZ(c.Y)
 	return 0
 }
 
@@ -338,26 +339,23 @@ func (c *Cpu) JSR() byte {
 func (c *Cpu) LDA() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#LDA
 	c.Accumulator = c.M
-	c.setZero()
-	c.setNegativeA7()
+	c.setNZ(c.Accumulator)
 	return 0
 }
 
-// LDX - Load X Register
+// LDX - Load X Register (M -> X)
 func (c *Cpu) LDX() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#LDX
 	c.X = c.M
-	c.setZero()
-	c.Flags.Negative = c.X&0x80 > 0
+	c.setNZ(c.X)
 	return 0
 }
 
-// LDY - Load Y Register
+// LDY - Load Y Register (M -> Y)
 func (c *Cpu) LDY() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#LDY
 	c.Y = c.M
-	c.setZero()
-	c.Flags.Negative = c.Y&0x80 > 0
+	c.setNZ(c.Y)
 	return 0
 }
 
@@ -366,8 +364,7 @@ func (c *Cpu) LSR() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#LSR
 	c.Flags.Carry = c.M&0x01 > 0 // old bit 0
 	c.M >>= 2
-	c.Flags.Zero = c.M == 0
-	c.setNegativeM7()
+	c.setNZ(c.M)
 	return 0
 }
 
@@ -381,8 +378,7 @@ func (c *Cpu) NOP() byte {
 func (c *Cpu) ORA() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#ORA
 	c.Accumulator |= c.M
-	c.setZero()
-	c.setNegativeA7()
+	c.setNZ(c.Accumulator)
 	return 0
 }
 
@@ -431,8 +427,7 @@ func (c *Cpu) PLA() byte {
 	c.Stack++
 	stackAddr := 0x0100 | uint16(c.Stack)
 	c.Accumulator = c.Read(stackAddr)
-	c.setZero()
-	c.setNegativeA7()
+	c.setNZ(c.Accumulator)
 	return 0
 }
 
@@ -466,8 +461,7 @@ func (c *Cpu) ROL() byte {
 		c.M |= 0x01
 	}
 
-	c.setZero()
-	c.setNegativeM7()
+	c.setNZ(c.M)
 	return 0
 }
 
@@ -481,8 +475,7 @@ func (c *Cpu) ROR() byte {
 		c.M |= 0x80
 	}
 
-	c.setZero()
-	c.setNegativeM7()
+	c.setNZ(c.M)
 	return 0
 }
 
@@ -573,24 +566,29 @@ func (c *Cpu) SEI() byte {
 	return 0
 }
 
-// STA - Store Accumulator
+// STA - Store Accumulator (A -> M)
 func (c *Cpu) STA() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#STA
 	c.M = c.Accumulator
+	c.Write(c.AbsAddress, c.M)
 	return 0
 }
 
-// STX - Store X Register
+// STX - Store X Register (X -> M)
 func (c *Cpu) STX() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#STX
 	c.M = c.X
+	// log.Println("writing byte", c.M, "to addr", c.AbsAddress)
+	c.Write(c.AbsAddress, c.M)
+	// log.Println("page 0", c.Bus.FakeRam[:16])
 	return 0
 }
 
-// STY - Store Y Register
+// STY - Store Y Register (Y -> M)
 func (c *Cpu) STY() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#STY
 	c.M = c.Y
+	c.Write(c.AbsAddress, c.M)
 	return 0
 }
 
@@ -598,8 +596,7 @@ func (c *Cpu) STY() byte {
 func (c *Cpu) TAX() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#TAX
 	c.X = c.Accumulator
-	c.Flags.Zero = c.X == 0
-	c.Flags.Negative = c.X&0x80 > 0
+	c.setNZ(c.X)
 	return 0
 }
 
@@ -607,8 +604,7 @@ func (c *Cpu) TAX() byte {
 func (c *Cpu) TAY() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#TAY
 	c.Y = c.Accumulator
-	c.Flags.Zero = c.Y == 0
-	c.Flags.Negative = c.Y&0x80 > 0
+	c.setNZ(c.Y)
 	return 0
 }
 
@@ -618,8 +614,7 @@ func (c *Cpu) TSX() byte {
 	c.Stack++
 	stackAddr := 0x0100 | uint16(c.Stack)
 	c.X = c.Read(stackAddr)
-	c.Flags.Zero = c.X == 0
-	c.Flags.Negative = c.X&0x80 > 0
+	c.setNZ(c.X)
 	return 0
 }
 
@@ -627,8 +622,7 @@ func (c *Cpu) TSX() byte {
 func (c *Cpu) TXA() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#TXA
 	c.Accumulator = c.X
-	c.Flags.Zero = c.X == 0
-	c.setNegativeA7()
+	c.setNZ(c.Accumulator)
 	return 0
 }
 
@@ -645,7 +639,6 @@ func (c *Cpu) TXS() byte {
 func (c *Cpu) TYA() byte {
 	// https://www.nesdev.org/obelisk-6502-guide/reference.html#TYA
 	c.Accumulator = c.Y
-	c.Flags.Zero = c.Y == 0
-	c.setNegativeA7()
+	c.setNZ(c.Y)
 	return 0
 }
